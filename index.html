@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="lab-token" content="__LAB_TOKEN__">
   <title>TRAINING LAB</title>
   <style>
     *{box-sizing:border-box}body{margin:0;background:#101b26;color:#deeaf4;font:16px/1.65 system-ui,sans-serif}
@@ -25,12 +26,14 @@
     td,th{padding:7px 9px;border-bottom:1px solid #304459}th{font-size:.875rem;color:#adbfcd}
     .report-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:14px}
     #summary{overflow-wrap:anywhere}.model-id{font-family:monospace;font-size:.85rem;overflow-wrap:anywhere}
+    .runtime{margin-bottom:16px}.runtime button{margin:0 0 0 8px}.runtime[hidden]{display:none}
     @media(max-width:670px){main{padding-top:22px}.grid{grid-template-columns:1fr}.card{padding:14px}}
   </style>
 </head>
 <body>
   <main>
     <header><h1>TRAINING LAB</h1><p class="sub">日本語の文章データを管理し、SCRIPT LAB 用の文体モデルを学習します。</p></header>
+    <div class="runtime sub" id="runtime" role="status" hidden></div>
     <section class="totals" aria-label="データ件数">
       <div class="total">人間執筆 <strong id="human">–</strong></div>
       <div class="total">AI生成 <strong id="ai">–</strong></div>
@@ -41,7 +44,7 @@
         <p class="sub">人間執筆を 0、AI生成を 1 としたUTF-8 JSONLを選びます。</p>
         <form id="import">
           <label>学習データ <input id="file" type="file" accept=".jsonl,.ndjson,.txt" required></label>
-          <button>取り込む</button>
+          <button disabled>取り込む</button>
         </form>
         <div id="import-status" class="status" role="status"></div>
         <details><summary>生成元・ジャンルの内訳</summary><div id="summary"></div></details>
@@ -55,7 +58,7 @@
           <div id="baseline-option" hidden>
             <label class="check"><input type="checkbox" name="compare_rules" checked> 指定した文体ルールと比較する</label>
           </div>
-          <button>学習を開始</button>
+          <button disabled>学習を開始</button>
         </form>
         <div id="train-status" class="status" role="status"></div>
       </section>
@@ -67,10 +70,38 @@
     </section>
   </main>
   <script>
-    const token = "__LAB_TOKEN__";
+    const token = document.querySelector('meta[name="lab-token"]').content;
+    const hosted = token === "__LAB_TOKEN__";
     const $ = (id) => document.getElementById(id);
     const parts = {train:"学習",validation:"検証",test:"テスト",audit:"独立評価"};
     const percent = (value) => value === null ? "–" : (value * 100).toFixed(1) + "%";
+    let worker;
+    let sequence = 0;
+    const waiting = new Map();
+
+    function browserRequest(route, body) {
+      if (!worker) {
+        worker = new Worker("training-worker.js");
+        worker.addEventListener("message", ({data}) => {
+          const task = waiting.get(data.id);
+          if (!task) return;
+          waiting.delete(data.id);
+          if (data.error) task.reject(new Error(data.error));
+          else task.resolve(data.value);
+        });
+        worker.addEventListener("error", () => {
+          for (const task of waiting.values()) task.reject(new Error("ブラウザーで学習環境を起動できませんでした。"));
+          waiting.clear();
+          worker.terminate();
+          worker = undefined;
+        });
+      }
+      return new Promise((resolve, reject) => {
+        const id = ++sequence;
+        waiting.set(id, {resolve, reject});
+        worker.postMessage({id, route, body}, body instanceof ArrayBuffer ? [body] : []);
+      });
+    }
 
     function node(tag, text, parent, className) {
       const element = document.createElement(tag);
@@ -93,6 +124,26 @@
       node("span", report.version, head, "model-id");
       const download = node("a", "モデルJSONを保存", head, "download");
       download.href = "/models/" + encodeURIComponent(report.version) + ".json";
+      if (hosted) {
+        download.href = "#reports";
+        download.addEventListener("click", async (event) => {
+          event.preventDefault();
+          const status = $("train-status");
+          try {
+            const model = await browserRequest("/models/" + report.version);
+            const link = document.createElement("a");
+            link.download = report.version + ".json";
+            link.href = URL.createObjectURL(new Blob([model], {type:"application/json"}));
+            document.body.append(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(link.href), 30000);
+          } catch (error) {
+            status.classList.add("error");
+            status.textContent = error.message;
+          }
+        });
+      }
       const separator = " ／ ";
       node("p", "特徴量 " + report.features + "件" + separator + "学習モデルのしきい値 " + percent(report.threshold)
         + (report.rule_threshold === null ? "" : separator + "ルールのしきい値 " + percent(report.rule_threshold)), parent, "sub");
@@ -117,6 +168,10 @@
     }
 
     async function request(url, body, type) {
+      if (hosted) {
+        if (body instanceof File && body.size > 20 * 1024 * 1024) throw new Error("ファイルの上限は20 MBです。");
+        return browserRequest(url, body instanceof File ? await body.arrayBuffer() : body);
+      }
       const options = body === undefined ? {} : {method:"POST", body, headers:{"X-Lab-Token":token,"Content-Type":type}};
       const response = await fetch(url, options);
       const value = await response.json();
@@ -179,7 +234,19 @@
       status.textContent = "学習と評価が完了しました。特徴量 " + result.features + "件。";
     });
 
-    refresh().catch((error) => { $("import-status").textContent = error.message; });
+    if (hosted) {
+      $("runtime").hidden = false;
+      $("runtime").textContent = "学習環境を準備しています。初回は少し時間がかかります。";
+    }
+    refresh().then(() => {
+      for (const button of document.querySelectorAll("form button")) button.disabled = false;
+      if (hosted) $("runtime").textContent = "取り込んだ文章と学習結果は、このブラウザーに保存されます。";
+    }).catch((error) => {
+      $("runtime").hidden = false;
+      $("runtime").classList.add("error");
+      $("runtime").textContent = error.message;
+      node("button", "再読み込み", $("runtime")).onclick = () => location.reload();
+    });
   </script>
 </body>
 </html>

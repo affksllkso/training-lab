@@ -7,12 +7,11 @@ import math
 import secrets
 import subprocess
 import threading
-from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from lab import dataset, evaluate, import_jsonl, model_file, versions
+from lab import evaluate, import_jsonl, model_file, summarize
 
 ROOT = Path(__file__).resolve().parent
 MAX_UPLOAD = 20 * 1024 * 1024
@@ -46,16 +45,6 @@ def rule_baseline(analyzer):
     return score
 
 
-def summarize(path, baseline_available=False):
-    rows = dataset(path)
-    labels = Counter(row["label"] for row in rows)
-    return {"human": labels[0], "ai": labels[1],
-            "sources": Counter(row["source"] for row in rows).most_common(),
-            "genres": Counter(row["genre"] for row in rows).most_common(),
-            "models": Counter(row["model"] for row in rows if row["label"] == 1).most_common(),
-            "versions": versions(path), "baseline_available": baseline_available}
-
-
 def serve(path, port, analyzer=None):
     token = secrets.token_urlsafe(32)
     training = threading.Lock()
@@ -85,7 +74,7 @@ def serve(path, port, analyzer=None):
                 return
             route = unquote(urlparse(self.path).path)
             if route == "/":
-                page = (ROOT / "dashboard.html").read_text(encoding="utf-8").replace("__LAB_TOKEN__", token)
+                page = (ROOT / "index.html").read_text(encoding="utf-8").replace("__LAB_TOKEN__", token, 1)
                 self.respond(200, page.encode("utf-8"), "text/html; charset=utf-8")
             elif route == "/api/status":
                 self.respond(200, summarize(path, analyzer is not None))

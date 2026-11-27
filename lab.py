@@ -131,6 +131,16 @@ def dataset(path):
         ]
 
 
+def summarize(path, baseline_available=False):
+    rows = dataset(path)
+    labels = Counter(row["label"] for row in rows)
+    return {"human": labels[0], "ai": labels[1],
+            "sources": Counter(row["source"] for row in rows).most_common(),
+            "genres": Counter(row["genre"] for row in rows).most_common(),
+            "models": Counter(row["model"] for row in rows if row["label"] == 1).most_common(),
+            "versions": versions(path), "baseline_available": baseline_available}
+
+
 def group_documents(rows):
     parents = list(range(len(rows)))
 
