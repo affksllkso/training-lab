@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
-from generate import generate, request_document
+from generate import generate, normalize_model_id, request_document
 from lab import dataset, evaluate, group_documents, import_jsonl, model_file, split_documents
 from predict import predict
 
@@ -96,6 +96,29 @@ class LabTest(unittest.TestCase):
         with patch("generate.build_opener", return_value=opener), self.assertRaisesRegex(ValueError, "停止"):
             request_document("ollama", "example", "例")
         self.assertEqual(opener.open.call_count, 1)
+
+    def test_gemini_4_models_normalize_and_strip_thought_parts(self):
+        self.assertEqual(normalize_model_id("gemini", "Gemini 4 Hydrogen"), "gemini-4-hydrogen")
+        self.assertEqual(normalize_model_id("gemini", "gemini4neon"), "gemini-4-neon")
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [
+                {"text": "思考過程", "thought": True},
+                {"text": "生成された日本語本文"},
+            ]}}]
+        }, ensure_ascii=False).encode("utf-8")
+        opener = Mock()
+        opener.open.return_value = response
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}), patch("generate.build_opener", return_value=opener):
+            output = request_document("gemini", "Gemini 4 Neon", "テスト題材")
+        self.assertEqual(output, "生成された日本語本文")
+        called_request = opener.open.call_args.args[0]
+        self.assertEqual(
+            called_request.full_url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-neon:generateContent",
+        )
 
 
 if __name__ == "__main__":

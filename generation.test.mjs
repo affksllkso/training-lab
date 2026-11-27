@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {makePlan, requestGoogle, runBatch} from "./generation.mjs";
+import {defaultModels, makePlan, modelPresets, normalizeModelId, requestGoogle, runBatch} from "./generation.mjs";
 
 const settings = {topics:"鉄道\n図書館\n鉄道", genre:"解説", style:"常体", provider:"gemma",
   model:"gemma-4-26b-a4b-it", perTopic:2, limit:3};
+
+test("Gemini 4 Hydrogen and Neon are exposed as presets and normalized", async () => {
+  assert.equal(defaultModels.gemini, "gemini-4-hydrogen");
+  assert.deepEqual(modelPresets.gemini.map(({id}) => id), [
+    "gemini-4-hydrogen",
+    "gemini-4-neon",
+    "gemini-3.1-flash-lite",
+  ]);
+  assert.equal(normalizeModelId("Gemini 4 Hydrogen"), "gemini-4-hydrogen");
+  assert.equal(normalizeModelId("gemini4neon"), "gemini-4-neon");
+  const plan = await makePlan({...settings, provider:"gemini", model:"Gemini 4 Neon", limit:1}, new Set());
+  assert.equal(plan[0].model, "gemini-4-neon");
+});
 
 test("plan respects the limit and resumes after already-saved variants", async () => {
   const first = await makePlan(settings, new Set());
@@ -16,19 +29,25 @@ test("plan respects the limit and resumes after already-saved variants", async (
   await assert.rejects(makePlan({...settings, model:"../../bad"}, new Set()), /モデルID/);
 });
 
-test("Google request keeps the key in its header and omits thought parts", async () => {
-  const text = await requestGoogle(settings.model, "test-key", "テスト題材", async (url, options) => {
-    assert.equal(url, "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:generateContent");
-    assert.equal(options.headers["x-goog-api-key"], "test-key");
-    assert.equal(options.redirect, "error");
-    assert.match(options.body, /テスト題材/);
-    assert.doesNotMatch(options.body, /test-key/);
-    return new Response(JSON.stringify({candidates:[{finishReason:"STOP",content:{parts:[
-      {text:"推論",thought:true},{text:"本文"},
-    ]}}]}));
-  });
-  assert.equal(text, "本文");
-  await assert.rejects(requestGoogle(settings.model, "test-key", "題材",
+test("Google request supports Gemini 4 models, keeps the key in its header, and omits thought parts", async () => {
+  for (const [inputModel, expectedId] of [
+    ["gemini-4-hydrogen", "gemini-4-hydrogen"],
+    ["Gemini 4 Neon", "gemini-4-neon"],
+    [settings.model, "gemma-4-26b-a4b-it"],
+  ]) {
+    const text = await requestGoogle(inputModel, "test-key", "テスト題材", async (url, options) => {
+      assert.equal(url, `https://generativelanguage.googleapis.com/v1beta/models/${expectedId}:generateContent`);
+      assert.equal(options.headers["x-goog-api-key"], "test-key");
+      assert.equal(options.redirect, "error");
+      assert.match(options.body, /テスト題材/);
+      assert.doesNotMatch(options.body, /test-key/);
+      return new Response(JSON.stringify({candidates:[{finishReason:"STOP",content:{parts:[
+        {text:"推論",thought:true},{text:"本文"},
+      ]}}]}));
+    });
+    assert.equal(text, "本文");
+  }
+  await assert.rejects(requestGoogle("gemini-4-neon", "test-key", "題材",
     async () => new Response("", {status:429})), /レート制限/);
 });
 

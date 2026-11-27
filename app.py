@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from generate import request_document
+from generate import normalize_model_id, request_document
 from lab import document_ids, evaluate, export_ai_jsonl, import_jsonl, model_file, summarize
 
 ROOT = Path(__file__).resolve().parent
@@ -116,6 +116,8 @@ def serve(path, port, analyzer=None):
                     if not isinstance(settings, dict):
                         raise ValueError("生成設定が無効です。")
                     engine, model, prompt = (settings.get(key) for key in ("engine", "model", "prompt"))
+                    if engine in ("gemini", "ollama") and isinstance(model, str):
+                        model = normalize_model_id(engine, model)
                     if (engine not in ("gemini", "ollama") or not isinstance(model, str)
                             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}", model)
                             or not isinstance(prompt, str) or not 1 <= len(prompt) <= 2000):

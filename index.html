@@ -31,6 +31,9 @@
     .runtime{margin-bottom:16px}.runtime button{margin:0 0 0 8px}.runtime[hidden]{display:none}
     fieldset{border:0;margin:0;padding:0;min-width:0}.generate-actions{display:flex;gap:10px;flex-wrap:wrap}
     .generate-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+    .model-presets{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    button.model-chip{margin:0;padding:5px 11px;border:1px solid #496074;border-radius:999px;background:#101b26;color:#deeaf4;font-size:.875rem;font-weight:600}
+    button.model-chip[aria-pressed=true]{border-color:#64dcc7;background:#203446;color:#64dcc7}
     .generation{margin-top:16px}.generation h2{scroll-margin-top:16px}
     .generate-meta{display:block;margin-top:10px}label[hidden]{display:none}
     @media(max-width:520px){.generate-fields{grid-template-columns:1fr}}
@@ -78,8 +81,9 @@
           <legend hidden>生成設定</legend>
           <div class="generate-fields">
             <label>生成サービス <select id="generate-provider" name="provider"><option value="gemini">Gemini API（Gemini）</option><option value="gemma">Gemini API（Gemma）</option></select></label>
-            <label>モデルID <input id="generate-model" name="model" value="gemini-3.1-flash-lite" maxlength="160" required></label>
+            <label>モデルID <input id="generate-model" name="model" value="gemini-4-hydrogen" list="generate-model-options" maxlength="160" required><datalist id="generate-model-options"></datalist></label>
           </div>
+          <div id="generate-model-presets" class="model-presets" role="group" aria-label="モデル候補"></div>
           <label id="generate-key-label" hidden>Gemini APIキー <input id="generate-key" type="password" maxlength="512" autocomplete="off" spellcheck="false"></label>
           <p id="generate-provider-note" class="sub"></p>
           <label>題材（1行に1件） <textarea name="topics" required maxlength="32400" placeholder="地域図書館の役割&#10;公共交通と通学"></textarea></label>
@@ -106,7 +110,7 @@
     </section>
   </main>
   <script type="module">
-    import {defaultModels, makePlan, requestGoogle, runBatch} from "./generation.mjs?v=2";
+    import {defaultModels, makePlan, modelPresets, normalizeModelId, requestGoogle, runBatch} from "./generation.mjs?v=3";
     const token = document.querySelector('meta[name="lab-token"]').content;
     const hosted = token === "__LAB_TOKEN__";
     const $ = (id) => document.getElementById(id);
@@ -282,19 +286,41 @@
 
     if (!hosted) $("generate-provider").add(new Option("ローカルのOllama（Gemma）", "ollama"));
 
+    function syncModelPresets() {
+      const current = normalizeModelId($("generate-model").value);
+      for (const chip of $("generate-model-presets").querySelectorAll("button.model-chip")) {
+        chip.setAttribute("aria-pressed", String(chip.dataset.modelId === current));
+      }
+    }
+
     function updateProvider() {
       const provider = $("generate-provider").value;
+      const presets = modelPresets[provider] || [];
       $("generate-model").value = defaultModels[provider];
+      $("generate-model-options").replaceChildren(...presets.map(({id, label}) => new Option(label, id)));
+      const presetWrap = $("generate-model-presets");
+      presetWrap.replaceChildren(...presets.map(({id, label}) => {
+        const chip = node("button", label + " (" + id + ")", presetWrap, "model-chip");
+        chip.type = "button";
+        chip.dataset.modelId = id;
+        chip.addEventListener("click", () => {
+          $("generate-model").value = id;
+          syncModelPresets();
+        });
+        return chip;
+      }));
+      syncModelPresets();
       $("generate-key-label").hidden = !hosted;
       $("generate-key").required = hosted;
       $("generate-provider-note").textContent = hosted
-        ? "キーと題材はGoogleのGemini APIに直接送信します。キーは保存しません。ローカルGemmaはWindows版から使えます。"
+        ? "キーと題材はGoogleのGemini APIに直接送信します（Gemini 4 Hydrogen / Neon 等に対応）。キーは保存しません。ローカルGemmaはWindows版から使えます。"
         : provider === "ollama"
           ? "Ollamaを起動し、利用できるGemmaのモデル名を指定してください。"
-          : "TRAINING LABを起動した環境の GEMINI_API_KEY を使います。題材はGoogleへ送信されます。";
+          : "TRAINING LABを起動した環境の GEMINI_API_KEY を使います（Gemini 4 Hydrogen / Neon 等に対応）。題材はGoogleへ送信されます。";
     }
 
     $("generate-provider").addEventListener("change", updateProvider);
+    $("generate-model").addEventListener("input", syncModelPresets);
     updateProvider();
     $("generate-stop").addEventListener("click", () => {
       stopGeneration = true;
@@ -316,7 +342,9 @@
       const status = $("generate-status");
       const button = event.submitter;
       const settings = Object.fromEntries(new FormData($("generate")));
-      settings.model = settings.model.trim();
+      settings.model = settings.provider === "ollama" ? settings.model.trim() : normalizeModelId(settings.model);
+      $("generate-model").value = settings.model;
+      syncModelPresets();
       settings.perTopic = Number(settings.perTopic);
       settings.limit = Number(settings.limit);
       const key = $("generate-key").value.trim();

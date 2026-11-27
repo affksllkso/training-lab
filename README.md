@@ -8,7 +8,7 @@
 
 ### Gemini／Gemmaで文章を集める
 
-「AI生成文を自動で集める」で Gemini または Gemma を選び、[Google AI Studio](https://aistudio.google.com/apikey) のAPIキーを入力します。題材は1行に1件入力し、ジャンル、文体、題材ごとの本数と今回の生成上限を指定します。初期モデルは [Gemini 3.1 Flash-Lite](https://aistudio.google.com/docs/models/gemini-3.1-flash-lite) と [Gemma 4](https://gemma.ai/deployment/gemini-api/) です。
+「AI生成文を自動で集める」で Gemini または Gemma を選び、[Google AI Studio](https://aistudio.google.com/apikey) のAPIキーを入力します。題材は1行に1件入力し、ジャンル、文体、題材ごとの本数と今回の生成上限を指定します。Geminiでは **Gemini 4 Hydrogen**（`gemini-4-hydrogen`・初期値）、**Gemini 4 Neon**（`gemini-4-neon`）、[Gemini 3.1 Flash-Lite](https://aistudio.google.com/docs/models/gemini-3.1-flash-lite)（`gemini-3.1-flash-lite`）をワンクリックで切り替えられ、Gemmaでは [Gemma 4](https://gemma.ai/deployment/gemini-api/)（`gemma-4-26b-a4b-it`）を選べます（任意のモデルIDの手入力にも対応）。
 
 生成成功時は、800〜1200字で重複のない文章をAI生成ラベル付きで順次取り込みます。同じ題材と設定で続けると保存済みの組み合わせを飛ばします。手動停止は進行中の1件を処理してから止まり、APIの利用上限に達した場合も保存済み分は残ります。「AI生成文をJSONLで保存」で、取り込み済みのAI生成文をまとめて取得できます。
 
@@ -62,7 +62,8 @@ IDと正規化済み本文の重複を除きます。著者・出典・テーマ
 JSONLの各行に `id`、`genre`、`topic`、`prompt` を用意します。Geminiを使う場合は `GEMINI_API_KEY` を現在の環境変数に設定します。Ollamaを使う場合は、ローカルで対象モデルを利用できる状態にします。
 
 ```powershell
-py -3 generate.py prompts.jsonl --provider gemini --model <モデルID> --limit 10
+py -3 generate.py prompts.jsonl --provider gemini --model gemini-4-hydrogen --limit 10
+py -3 generate.py prompts.jsonl --provider gemini --model gemini-4-neon --limit 10
 py -3 generate.py prompts.jsonl --provider ollama --model <ローカルのモデル名> --limit 10
 ```
 

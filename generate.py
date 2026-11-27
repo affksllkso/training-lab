@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -12,6 +13,23 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from lab import database, get_field, import_jsonl, parse_record
 
 ROOT = Path(__file__).resolve().parent
+DEFAULT_MODELS = {
+    "gemini": "gemini-4-hydrogen",
+    "ollama": "gemma4:e2b",
+}
+MODEL_ALIASES = {
+    "gemini4hydrogen": "gemini-4-hydrogen",
+    "gemini4neon": "gemini-4-neon",
+    "gemini3.1flashlite": "gemini-3.1-flash-lite",
+}
+
+
+def normalize_model_id(engine, model):
+    normalized = unicodedata.normalize("NFKC", model).strip()
+    if engine == "gemini":
+        compact = re.sub(r"[\s_-]+", "", normalized.lower())
+        return MODEL_ALIASES.get(compact, normalized)
+    return normalized
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -20,6 +38,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def request_document(engine, model, prompt):
+    model = normalize_model_id(engine, model)
     instruction = "次の依頼に沿って、800〜1200字の日本語本文だけを書いてください。架空の出典は書かないでください。\n\n" + prompt
     headers = {"Content-Type": "application/json"}
     if engine == "gemini":
@@ -37,7 +56,7 @@ def request_document(engine, model, prompt):
 
     request = Request(url, json.dumps(body, ensure_ascii=False).encode("utf-8"), headers)
     try:
-        with build_opener(NoRedirect()).open(request, timeout=120) as response:
+        with build_opener(NoRedirect()).open(request, timeout=180) as response:
             result = json.loads(response.read(1_000_000))
     except HTTPError as error:
         if error.code == 429:
@@ -56,6 +75,7 @@ def request_document(engine, model, prompt):
 
 def generate(plan, path, engine, model, limit, provider=request_document, notify=print):
     source = {"gemini": "Gemini", "ollama": "Ollama"}[engine]
+    model = normalize_model_id(engine, model)
     with database(path) as db:
         known = {row["id"] for row in db.execute("SELECT id FROM documents")}
     completed = 0
@@ -97,15 +117,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plan", type=Path)
     parser.add_argument("--provider", required=True, choices=("gemini", "ollama"))
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model", help="モデルID（省略時は gemini-4-hydrogen または gemma4:e2b）")
     parser.add_argument("--db", type=Path, default=ROOT / "data" / "training.sqlite3")
     parser.add_argument("--limit", type=int, default=10, help="今回の生成件数の上限")
     args = parser.parse_args()
     if not 1 <= args.limit <= 100:
         parser.error("--limit は1〜100で指定してください。")
+    selected_model = args.model or DEFAULT_MODELS[args.provider]
     args.db.parent.mkdir(parents=True, exist_ok=True)
     try:
-        count = generate(args.plan, args.db, args.provider, args.model, args.limit)
+        count = generate(args.plan, args.db, args.provider, selected_model, args.limit)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     print(f"保存件数: {count}")
