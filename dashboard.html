@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRAINING LAB</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#101b26;color:#deeaf4;font:16px/1.65 system-ui,sans-serif}
+    main{width:min(1100px,100% - 32px);margin:auto;padding:32px 0 64px}
+    header{border-bottom:1px solid #304459;padding-bottom:20px;margin-bottom:24px}
+    h1{font-size:clamp(1.9rem,5vw,3rem);line-height:1.2;letter-spacing:.04em;margin:0;color:#f0f7fb}
+    h2{font-size:1.15rem;margin:0}h3{font-size:1rem;margin:.65rem 0}
+    p{margin:.45rem 0}.sub,small{color:#adbfcd}small{font-size:.875rem}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.card{background:#172635;border:1px solid #304459;border-radius:14px;padding:20px;min-width:0}
+    .reports{margin-top:16px}.totals{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+    .total{background:#203446;border:1px solid #304459;padding:12px 18px;border-radius:10px}
+    .total strong{display:block;color:#64dcc7;font-size:1.65rem;line-height:1.25}
+    label{display:grid;gap:4px;margin-top:12px}.check{display:flex;align-items:center;gap:8px}
+    input:not([type=checkbox]),select{width:100%;min-width:0;border:1px solid #496074;border-radius:8px;background:#101b26;color:#deeaf4;padding:8px;font:inherit}
+    input::file-selector-button,button,.download{border:0;border-radius:8px;background:#64dcc7;color:#101b26;font:inherit;font-weight:700;padding:8px 13px;cursor:pointer;text-decoration:none}
+    input::file-selector-button{margin-right:10px}button{margin-top:14px}button:disabled{opacity:.55;cursor:wait}
+    :focus-visible{outline:3px solid #f3cd82;outline-offset:3px}a{color:#64dcc7}summary{cursor:pointer}
+    .status{min-height:26px;margin-top:12px;color:#bcebe2}.error{color:#ffb7b9}.status ul{margin:0;padding-left:1.1rem;overflow-wrap:anywhere}
+    .scroll{overflow:auto}table{width:100%;border-collapse:collapse;margin:.65rem 0 1rem;text-align:left;white-space:nowrap}
+    td,th{padding:7px 9px;border-bottom:1px solid #304459}th{font-size:.875rem;color:#adbfcd}
+    .report-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:14px}
+    #summary{overflow-wrap:anywhere}.model-id{font-family:monospace;font-size:.85rem;overflow-wrap:anywhere}
+    @media(max-width:670px){main{padding-top:22px}.grid{grid-template-columns:1fr}.card{padding:14px}}
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>TRAINING LAB</h1><p class="sub">日本語の文章データを管理し、SCRIPT LAB 用の文体モデルを学習します。</p></header>
+    <section class="totals" aria-label="データ件数">
+      <div class="total">人間執筆 <strong id="human">–</strong></div>
+      <div class="total">AI生成 <strong id="ai">–</strong></div>
+    </section>
+    <div class="grid">
+      <section class="card">
+        <h2>データを取り込む</h2>
+        <p class="sub">人間執筆を 0、AI生成を 1 としたUTF-8 JSONLを選びます。</p>
+        <form id="import">
+          <label>学習データ <input id="file" type="file" accept=".jsonl,.ndjson,.txt" required></label>
+          <button>取り込む</button>
+        </form>
+        <div id="import-status" class="status" role="status"></div>
+        <details><summary>生成元・ジャンルの内訳</summary><div id="summary"></div></details>
+      </section>
+      <section class="card">
+        <h2>学習と評価</h2>
+        <p class="sub">著者・出典・テーマ・似た文章をまとめてから、学習・検証・テストに分けます。</p>
+        <form id="train">
+          <label>独立評価用の生成モデル <select name="hold_model" id="hold-model"></select></label>
+          <label>独立評価用のジャンル <select name="hold_genre" id="hold-genre"></select></label>
+          <div id="baseline-option" hidden>
+            <label class="check"><input type="checkbox" name="compare_rules" checked> 指定した文体ルールと比較する</label>
+          </div>
+          <button>学習を開始</button>
+        </form>
+        <div id="train-status" class="status" role="status"></div>
+      </section>
+    </div>
+    <section class="card reports">
+      <h2>評価結果とモデル</h2>
+      <p class="sub">テストの識別子が同じ結果同士で比較できます。モデルの採用は、誤判定率とデータ件数も見て判断してください。</p>
+      <div id="reports"></div>
+    </section>
+  </main>
+  <script>
+    const token = "__LAB_TOKEN__";
+    const $ = (id) => document.getElementById(id);
+    const parts = {train:"学習",validation:"検証",test:"テスト",audit:"独立評価"};
+    const percent = (value) => value === null ? "–" : (value * 100).toFixed(1) + "%";
+
+    function node(tag, text, parent, className) {
+      const element = document.createElement(tag);
+      if (text !== null) element.textContent = text;
+      if (className) element.className = className;
+      if (parent) parent.append(element);
+      return element;
+    }
+
+    function fillSelect(id, choices) {
+      const select = $(id);
+      const latest = select.value;
+      select.replaceChildren(new Option("指定なし", ""), ...choices.map(([name, count]) => new Option(name + "（" + count + "件）", name)));
+      if (choices.some(([name]) => name === latest)) select.value = latest;
+    }
+
+    function describeReport(report, parent) {
+      const fields = ["区分", "方式", "人 / AI", "AI側 F1", "Macro F1", "人間文の誤検出率", "カバー率", "テスト識別子"];
+      const head = node("div", null, parent, "report-head");
+      node("span", report.version, head, "model-id");
+      const download = node("a", "モデルJSONを保存", head, "download");
+      download.href = "/models/" + encodeURIComponent(report.version) + ".json";
+      const separator = " ／ ";
+      node("p", "特徴量 " + report.features + "件" + separator + "学習モデルのしきい値 " + percent(report.threshold)
+        + (report.rule_threshold === null ? "" : separator + "ルールのしきい値 " + percent(report.rule_threshold)), parent, "sub");
+      if (report.hold_model || report.hold_genre) {
+        node("p", "独立評価対象 " + [report.hold_model, report.hold_genre].filter(Boolean).join(separator), parent, "sub");
+      }
+      if (report.baseline_id) node("p", "比較ルールの識別子 " + report.baseline_id.slice(0,12), parent, "sub");
+      const scroller = node("div", null, parent, "scroll");
+      const table = node("table", null, scroller);
+      const heading = node("tr", null, node("thead", null, table));
+      for (const field of fields) node("th", field, heading).scope = "col";
+      const body = node("tbody", null, table);
+      for (const [part, item] of Object.entries(report.partitions)) {
+        for (const [name, row] of [["学習モデル",item.model],["文体ルール",item.rules]]) {
+          if (!row) continue;
+          const tr = node("tr", null, body);
+          const values = [parts[part],name,row.human + " / " + row.ai,percent(row.f1),percent(row.macro_f1),
+            percent(row.human_fpr),percent(row.coverage),item.fingerprint.slice(0,12)];
+          for (const value of values) node("td", value, tr);
+        }
+      }
+    }
+
+    async function request(url, body, type) {
+      const options = body === undefined ? {} : {method:"POST", body, headers:{"X-Lab-Token":token,"Content-Type":type}};
+      const response = await fetch(url, options);
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || "処理に失敗しました。");
+      return value;
+    }
+
+    async function refresh() {
+      const data = await request("/api/status");
+      $("human").textContent = data.human.toLocaleString("ja-JP");
+      $("ai").textContent = data.ai.toLocaleString("ja-JP");
+      fillSelect("hold-model", data.models);
+      fillSelect("hold-genre", data.genres);
+      $("baseline-option").hidden = !data.baseline_available;
+      $("summary").replaceChildren();
+      for (const [title, values] of [["生成元・出典",data.sources],["ジャンル",data.genres],["生成モデル",data.models]]) {
+        node("h3", title, $("summary"));
+        node("p", values.map(([name,count]) => name + " " + count + "件").join("、") || "データなし", $("summary"));
+      }
+      $("reports").replaceChildren();
+      if (!data.versions.length) node("p","保存されたモデルはありません。",$("reports"),"sub");
+      data.versions.forEach((report, index) => {
+        if (index === 0) describeReport(report, $("reports"));
+        else {
+          const disclosure = node("details", null, $("reports"));
+          node("summary", report.version, disclosure);
+          describeReport(report, disclosure);
+        }
+      });
+    }
+
+    function wire(id, pending, work) {
+      $(id).addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = event.submitter;
+        const status = $(id + "-status");
+        button.disabled = true;
+        status.classList.remove("error");
+        status.textContent = pending;
+        try { await work(status); await refresh(); }
+        catch (error) { status.classList.add("error"); status.textContent = error.message; }
+        finally { button.disabled = false; }
+      });
+    }
+
+    wire("import", "取り込み中…", async (status) => {
+      const file = $("file").files[0];
+      const {counts, errors} = await request("/api/import", file, "application/x-ndjson");
+      status.textContent = "追加 " + (counts.added || 0) + "件、重複 " + (counts.duplicate || 0) + "件、エラー " + (counts.invalid || 0) + "件";
+      if (errors.length) {
+        const list = node("ul", null, status);
+        for (const error of errors) node("li", error, list);
+      }
+    });
+
+    wire("train", "学習と評価を実行中…", async (status) => {
+      const data = Object.fromEntries(new FormData($("train")));
+      data.compare_rules = data.compare_rules === "on";
+      const result = await request("/api/train", JSON.stringify(data), "application/json");
+      status.textContent = "学習と評価が完了しました。特徴量 " + result.features + "件。";
+    });
+
+    refresh().catch((error) => { $("import-status").textContent = error.message; });
+  </script>
+</body>
+</html>
