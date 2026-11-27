@@ -50,7 +50,9 @@ async function initialize() {
     importScripts(runtimeUrl + "pyodide.js");
     const python = await loadPyodide({indexURL: runtimeUrl});
     await python.loadPackage("sqlite3");
-    const code = await fetch("lab.py");
+    const labUrl = new URL("lab.py", self.location.href);
+    labUrl.search = self.location.search;
+    const code = await fetch(labUrl, {cache: "no-cache"});
     if (!code.ok) throw new Error("lab.py");
     python.FS.writeFile("/lab.py", await code.text());
     await python.runPythonAsync(`
@@ -75,10 +77,12 @@ def dispatch(route, options):
         elif route == "/api/train":
             settings = json.loads(options)
             result = evaluate(path, settings.get("hold_model", ""), settings.get("hold_genre", ""))
-        else:
+        elif route.startswith("/models/"):
             result = model_file(path, route.removeprefix("/models/"))
             if result is None:
                 raise ValueError("モデルが見つかりません。")
+        else:
+            raise ValueError("この操作は利用できません。ページを更新してください。")
         return json.dumps({"value": result}, ensure_ascii=False)
     except UnicodeDecodeError:
         return json.dumps({"error": "UTF-8のJSONLファイルを使用してください。"}, ensure_ascii=False)

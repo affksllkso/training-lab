@@ -106,7 +106,7 @@
     </section>
   </main>
   <script type="module">
-    import {defaultModels, makePlan, requestGoogle, runBatch} from "./generation.mjs";
+    import {defaultModels, makePlan, requestGoogle, runBatch} from "./generation.mjs?v=2";
     const token = document.querySelector('meta[name="lab-token"]').content;
     const hosted = token === "__LAB_TOKEN__";
     const $ = (id) => document.getElementById(id);
@@ -120,7 +120,7 @@
 
     function browserRequest(route, body) {
       if (!worker) {
-        worker = new Worker("training-worker.js");
+        worker = new Worker("training-worker.js?v=2");
         worker.addEventListener("message", ({data}) => {
           const task = waiting.get(data.id);
           if (!task) return;
