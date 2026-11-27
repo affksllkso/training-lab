@@ -58,13 +58,17 @@ import json
 import sys
 from pathlib import Path
 sys.path.insert(0, "/")
-from lab import evaluate, import_jsonl, model_file, summarize
+from lab import document_ids, evaluate, export_ai_jsonl, import_jsonl, model_file, summarize
 
 def dispatch(route, options):
     path = "/training.sqlite3"
     try:
         if route == "/api/status":
             result = summarize(path)
+        elif route == "/api/document-ids":
+            result = document_ids(path)
+        elif route == "/api/ai-data":
+            result = {"jsonl": export_ai_jsonl(path)}
         elif route == "/api/import":
             counts, errors = import_jsonl(path, Path("/import.jsonl").read_bytes())
             result = {"counts": counts, "errors": errors}

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import secrets
 import subprocess
 import threading
@@ -11,7 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from lab import evaluate, import_jsonl, model_file, summarize
+from generate import request_document
+from lab import document_ids, evaluate, export_ai_jsonl, import_jsonl, model_file, summarize
 
 ROOT = Path(__file__).resolve().parent
 MAX_UPLOAD = 20 * 1024 * 1024
@@ -76,8 +78,14 @@ def serve(path, port, analyzer=None):
             if route == "/":
                 page = (ROOT / "index.html").read_text(encoding="utf-8").replace("__LAB_TOKEN__", token, 1)
                 self.respond(200, page.encode("utf-8"), "text/html; charset=utf-8")
+            elif route == "/generation.mjs":
+                self.respond(200, (ROOT / "generation.mjs").read_bytes(), "text/javascript; charset=utf-8")
             elif route == "/api/status":
                 self.respond(200, summarize(path, analyzer is not None))
+            elif route == "/api/document-ids":
+                self.respond(200, document_ids(path))
+            elif route == "/api/ai-data":
+                self.respond(200, {"jsonl": export_ai_jsonl(path)})
             elif route.startswith("/models/"):
                 version = route.removeprefix("/models/").removesuffix(".json")
                 model = model_file(path, version)
@@ -103,6 +111,16 @@ def serve(path, port, analyzer=None):
                 if route == "/api/import":
                     counts, errors = import_jsonl(path, raw)
                     self.respond(200, {"counts": counts, "errors": errors})
+                elif route == "/api/generate":
+                    settings = json.loads(raw)
+                    if not isinstance(settings, dict):
+                        raise ValueError("生成設定が無効です。")
+                    engine, model, prompt = (settings.get(key) for key in ("engine", "model", "prompt"))
+                    if (engine not in ("gemini", "ollama") or not isinstance(model, str)
+                            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}", model)
+                            or not isinstance(prompt, str) or not 1 <= len(prompt) <= 2000):
+                        raise ValueError("モデルIDと題材を確認してください。")
+                    self.respond(200, {"text": request_document(engine, model, prompt)})
                 elif route == "/api/train":
                     settings = json.loads(raw)
                     if not isinstance(settings, dict):

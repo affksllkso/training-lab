@@ -141,6 +141,17 @@ def summarize(path, baseline_available=False):
             "versions": versions(path), "baseline_available": baseline_available}
 
 
+def document_ids(path):
+    with database(path) as db:
+        return [row["id"] for row in db.execute("SELECT id FROM documents")]
+
+
+def export_ai_jsonl(path):
+    with database(path) as db:
+        return "".join(row["record"] + "\n" for row in db.execute(
+            "SELECT record FROM documents WHERE label = 1 ORDER BY id"))
+
+
 def group_documents(rows):
     parents = list(range(len(rows)))
 

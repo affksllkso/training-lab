@@ -6,9 +6,17 @@
 
 **[TRAINING LABを開く](https://affksllkso.github.io/training-lab/)**。WindowsのターミナルやPythonのインストールは不要です。初回はブラウザー用のPython環境を読み込みます。JSONLの取り込み・学習・評価・モデル保存はブラウザー内で実行します。文章と結果はそのブラウザーに保存されるので、ほかの端末へ移す場合は元のJSONLと書き出したモデルを保管してください。
 
+### Gemini／Gemmaで文章を集める
+
+「AI生成文を自動で集める」で Gemini または Gemma を選び、[Google AI Studio](https://aistudio.google.com/apikey) のAPIキーを入力します。題材は1行に1件入力し、ジャンル、文体、題材ごとの本数と今回の生成上限を指定します。初期モデルは [Gemini 3.1 Flash-Lite](https://aistudio.google.com/docs/models/gemini-3.1-flash-lite) と [Gemma 4](https://gemma.ai/deployment/gemini-api/) です。
+
+生成成功時は、800〜1200字で重複のない文章をAI生成ラベル付きで順次取り込みます。同じ題材と設定で続けると保存済みの組み合わせを飛ばします。手動停止は進行中の1件を処理してから止まり、APIの利用上限に達した場合も保存済み分は残ります。「AI生成文をJSONLで保存」で、取り込み済みのAI生成文をまとめて取得できます。
+
+公開版ではブラウザーがAPIキーと題材をGoogleへ直接送ります。キーは設定ファイルやブラウザーのデータベースに保存しません。APIの利用上限や課金は、キーを発行したGoogle側のプロジェクト設定に従います。
+
 ## Windowsでローカル起動
 
-Gemini／Ollamaでの生成、既存の文体ルールとの比較、コマンドライン推論を使う場合はローカル版を起動します。
+Ollamaで動くローカルGemma、既存の文体ルールとの比較、コマンドライン推論を使う場合はローカル版を起動します。
 
 Python 3.11以上を用意し、このリポジトリのフォルダーで実行します。追加パッケージのインストールは不要です。
 
@@ -17,6 +25,8 @@ py -3 app.py
 ```
 
 起動後、同じPCのブラウザーで `http://127.0.0.1:4181/` を開きます。WindowsでPythonランチャーを使わない場合は `python app.py` でも起動できます。データとモデル履歴は `data/training.sqlite3` に保存されます。
+
+Ollamaを起動し、「ローカルのOllama（Gemma）」を選択してください。初期値は [`gemma4:e2b`](https://ollama.com/library/gemma4:e2b) です。利用するモデルを事前にOllamaで取得します。ローカル版の画面でGemini APIを選んだ場合は、起動環境の `GEMINI_API_KEY` を使います。
 
 ## 取り込み・学習・出力
 
@@ -47,7 +57,7 @@ IDと正規化済み本文の重複を除きます。著者・出典・テーマ
 
 文字2〜4グラムのTF-IDFとロジスティック回帰を使います。しきい値を検証データで決め、テストを評価に使います。文体ルールとの比較には、Node.js 22.13以上を用意し、`analyze(text).score` が0〜100を返す既存の解析モジュールを `app.py --baseline <ファイル>` で指定してください。
 
-## Gemini／OllamaでAI生成文を追加
+## コマンドラインでAI生成文を追加
 
 JSONLの各行に `id`、`genre`、`topic`、`prompt` を用意します。Geminiを使う場合は `GEMINI_API_KEY` を現在の環境変数に設定します。Ollamaを使う場合は、ローカルで対象モデルを利用できる状態にします。
 

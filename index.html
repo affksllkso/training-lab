@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="lab-token" content="__LAB_TOKEN__">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; worker-src 'self'; connect-src 'self' https://generativelanguage.googleapis.com; base-uri 'none'; form-action 'self'">
   <title>TRAINING LAB</title>
   <style>
     *{box-sizing:border-box}body{margin:0;background:#101b26;color:#deeaf4;font:16px/1.65 system-ui,sans-serif}
@@ -17,7 +18,8 @@
     .total{background:#203446;border:1px solid #304459;padding:12px 18px;border-radius:10px}
     .total strong{display:block;color:#64dcc7;font-size:1.65rem;line-height:1.25}
     label{display:grid;gap:4px;margin-top:12px}.check{display:flex;align-items:center;gap:8px}
-    input:not([type=checkbox]),select{width:100%;min-width:0;border:1px solid #496074;border-radius:8px;background:#101b26;color:#deeaf4;padding:8px;font:inherit}
+    input:not([type=checkbox]),select,textarea{width:100%;min-width:0;border:1px solid #496074;border-radius:8px;background:#101b26;color:#deeaf4;padding:8px;font:inherit}
+    textarea{resize:vertical;min-height:108px}
     input::file-selector-button,button,.download{border:0;border-radius:8px;background:#64dcc7;color:#101b26;font:inherit;font-weight:700;padding:8px 13px;cursor:pointer;text-decoration:none}
     input::file-selector-button{margin-right:10px}button{margin-top:14px}button:disabled{opacity:.55;cursor:wait}
     :focus-visible{outline:3px solid #f3cd82;outline-offset:3px}a{color:#64dcc7}summary{cursor:pointer}
@@ -27,6 +29,11 @@
     .report-head{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:14px}
     #summary{overflow-wrap:anywhere}.model-id{font-family:monospace;font-size:.85rem;overflow-wrap:anywhere}
     .runtime{margin-bottom:16px}.runtime button{margin:0 0 0 8px}.runtime[hidden]{display:none}
+    fieldset{border:0;margin:0;padding:0;min-width:0}.generate-actions{display:flex;gap:10px;flex-wrap:wrap}
+    .generate-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+    .generation{margin-top:16px}.generation h2{scroll-margin-top:16px}
+    .generate-meta{display:block;margin-top:10px}label[hidden]{display:none}
+    @media(max-width:520px){.generate-fields{grid-template-columns:1fr}}
     @media(max-width:670px){main{padding-top:22px}.grid{grid-template-columns:1fr}.card{padding:14px}}
   </style>
 </head>
@@ -63,13 +70,43 @@
         <div id="train-status" class="status" role="status"></div>
       </section>
     </div>
+    <section class="card generation" aria-labelledby="generation-heading">
+      <h2 id="generation-heading">AI生成文を自動で集める</h2>
+      <p class="sub">題材ごとに日本語の文章を生成し、800〜1200字の本文を学習データに追加します。</p>
+      <form id="generate">
+        <fieldset id="generate-fields">
+          <legend hidden>生成設定</legend>
+          <div class="generate-fields">
+            <label>生成サービス <select id="generate-provider" name="provider"><option value="gemini">Gemini API（Gemini）</option><option value="gemma">Gemini API（Gemma）</option></select></label>
+            <label>モデルID <input id="generate-model" name="model" value="gemini-3.1-flash-lite" maxlength="160" required></label>
+          </div>
+          <label id="generate-key-label" hidden>Gemini APIキー <input id="generate-key" type="password" maxlength="512" autocomplete="off" spellcheck="false"></label>
+          <p id="generate-provider-note" class="sub"></p>
+          <label>題材（1行に1件） <textarea name="topics" required maxlength="32400" placeholder="地域図書館の役割&#10;公共交通と通学"></textarea></label>
+          <div class="generate-fields">
+            <label>ジャンル <select name="genre"><option>解説</option><option>大学レポート</option><option>意見文</option><option>随筆</option><option>ニュース記事</option><option>ビジネス文書</option><option>レビュー</option><option>技術解説</option><option>物語</option><option>インタビュー記事</option></select></label>
+            <label>文体 <select name="style"><option>です・ます調</option><option>だ・である調</option><option>口語調</option></select></label>
+            <label>題材ごとの本数 <input name="perTopic" type="number" min="1" max="5" value="1" required></label>
+            <label>今回の生成上限 <input name="limit" type="number" min="1" max="20" value="10" required></label>
+          </div>
+        </fieldset>
+        <div class="generate-actions">
+          <button type="submit" disabled>生成して追加</button>
+          <button id="generate-stop" type="button" disabled>生成を停止</button>
+          <button id="download-ai" type="button" disabled>AI生成文をJSONLで保存</button>
+        </div>
+        <div id="generate-status" class="status" role="status"></div>
+        <small class="generate-meta">保存した題材・設定の組み合わせは、同じ条件で実行したときに自動で飛ばします。</small>
+      </form>
+    </section>
     <section class="card reports">
       <h2>評価結果とモデル</h2>
       <p class="sub">テストの識別子が同じ結果同士で比較できます。モデルの採用は、誤判定率とデータ件数も見て判断してください。</p>
       <div id="reports"></div>
     </section>
   </main>
-  <script>
+  <script type="module">
+    import {defaultModels, makePlan, requestGoogle, runBatch} from "./generation.mjs";
     const token = document.querySelector('meta[name="lab-token"]').content;
     const hosted = token === "__LAB_TOKEN__";
     const $ = (id) => document.getElementById(id);
@@ -77,6 +114,8 @@
     const percent = (value) => value === null ? "–" : (value * 100).toFixed(1) + "%";
     let worker;
     let sequence = 0;
+    let stopGeneration = false;
+    let aiCount = 0;
     const waiting = new Map();
 
     function browserRequest(route, body) {
@@ -118,6 +157,17 @@
       if (choices.some(([name]) => name === latest)) select.value = latest;
     }
 
+    function downloadText(data, filename, type) {
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(new Blob([data], {type}));
+      link.download = filename;
+      link.href = url;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }
+
     function describeReport(report, parent) {
       const fields = ["区分", "方式", "人 / AI", "AI側 F1", "Macro F1", "人間文の誤検出率", "カバー率", "テスト識別子"];
       const head = node("div", null, parent, "report-head");
@@ -131,13 +181,7 @@
           const status = $("train-status");
           try {
             const model = await browserRequest("/models/" + report.version);
-            const link = document.createElement("a");
-            link.download = report.version + ".json";
-            link.href = URL.createObjectURL(new Blob([model], {type:"application/json"}));
-            document.body.append(link);
-            link.click();
-            link.remove();
-            setTimeout(() => URL.revokeObjectURL(link.href), 30000);
+            downloadText(model, report.version + ".json", "application/json");
           } catch (error) {
             status.classList.add("error");
             status.textContent = error.message;
@@ -183,6 +227,8 @@
       const data = await request("/api/status");
       $("human").textContent = data.human.toLocaleString("ja-JP");
       $("ai").textContent = data.ai.toLocaleString("ja-JP");
+      aiCount = data.ai;
+      $("download-ai").disabled = !aiCount;
       fillSelect("hold-model", data.models);
       fillSelect("hold-genre", data.genres);
       $("baseline-option").hidden = !data.baseline_available;
@@ -234,12 +280,102 @@
       status.textContent = "学習と評価が完了しました。特徴量 " + result.features + "件。";
     });
 
+    if (!hosted) $("generate-provider").add(new Option("ローカルのOllama（Gemma）", "ollama"));
+
+    function updateProvider() {
+      const provider = $("generate-provider").value;
+      $("generate-model").value = defaultModels[provider];
+      $("generate-key-label").hidden = !hosted;
+      $("generate-key").required = hosted;
+      $("generate-provider-note").textContent = hosted
+        ? "キーと題材はGoogleのGemini APIに直接送信します。キーは保存しません。ローカルGemmaはWindows版から使えます。"
+        : provider === "ollama"
+          ? "Ollamaを起動し、利用できるGemmaのモデル名を指定してください。"
+          : "TRAINING LABを起動した環境の GEMINI_API_KEY を使います。題材はGoogleへ送信されます。";
+    }
+
+    $("generate-provider").addEventListener("change", updateProvider);
+    updateProvider();
+    $("generate-stop").addEventListener("click", () => {
+      stopGeneration = true;
+      $("generate-stop").disabled = true;
+      $("generate-status").textContent = "現在の1件を処理してから停止します。";
+    });
+    $("download-ai").addEventListener("click", async () => {
+      const status = $("generate-status");
+      try {
+        const {jsonl} = await request("/api/ai-data");
+        downloadText(jsonl, "training-lab-ai-" + new Date().toISOString().slice(0, 10) + ".jsonl", "application/x-ndjson");
+      } catch (error) {
+        status.classList.add("error");
+        status.textContent = error.message;
+      }
+    });
+    $("generate").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = $("generate-status");
+      const button = event.submitter;
+      const settings = Object.fromEntries(new FormData($("generate")));
+      settings.model = settings.model.trim();
+      settings.perTopic = Number(settings.perTopic);
+      settings.limit = Number(settings.limit);
+      const key = $("generate-key").value.trim();
+      const engine = settings.provider === "ollama" ? "ollama" : "gemini";
+      let counts = {saved: 0, skipped: 0};
+      button.disabled = true;
+      $("generate-fields").disabled = true;
+      $("generate-stop").disabled = false;
+      stopGeneration = false;
+      status.classList.remove("error");
+      status.textContent = "生成予定を確認中…";
+
+      async function generateBatch() {
+        const known = new Set(await request("/api/document-ids"));
+        const jobs = await makePlan(settings, known);
+        if (!jobs.length) {
+          status.textContent = "この条件で新しく生成する題材はありません。";
+          return;
+        }
+        counts = await runBatch(jobs, {
+          generate: ({model, prompt}) => hosted ? requestGoogle(model, key, prompt)
+            : request("/api/generate", JSON.stringify({engine, model, prompt}), "application/json").then(({text}) => text),
+          save: (record) => request("/api/import", new File([JSON.stringify(record)], "generated.jsonl"), "application/x-ndjson"),
+          stopping: () => stopGeneration,
+          progress: ({index, job, saved, skipped, note}) => {
+            counts = {saved, skipped};
+            status.textContent = (index + 1) + " / " + jobs.length + "件目「" + job.topic + "」 " + (note || "生成中…")
+              + " ｜ 保存 " + saved + "件・保留 " + skipped + "件";
+          },
+        });
+        status.textContent = (stopGeneration ? "生成を停止しました。" : "生成が完了しました。")
+          + " 保存 " + counts.saved + "件、保留 " + counts.skipped + "件。";
+      }
+
+      try {
+        if (navigator.locks) {
+          await navigator.locks.request("training-lab-generation", {ifAvailable:true}, async (lock) => {
+            if (!lock) throw new Error("別のタブで自動生成しています。");
+            await generateBatch();
+          });
+        } else await generateBatch();
+      } catch (error) {
+        status.classList.add("error");
+        status.textContent = error.message + " 保存 " + counts.saved + "件、保留 " + counts.skipped + "件。";
+      } finally {
+        try { await refresh(); } catch { /* Preserve the generation result in the status. */ }
+        button.disabled = false;
+        $("generate-fields").disabled = false;
+        $("generate-stop").disabled = true;
+        $("download-ai").disabled = !aiCount;
+      }
+    });
+
     if (hosted) {
       $("runtime").hidden = false;
       $("runtime").textContent = "学習環境を準備しています。初回は少し時間がかかります。";
     }
     refresh().then(() => {
-      for (const button of document.querySelectorAll("form button")) button.disabled = false;
+      for (const button of document.querySelectorAll("form button:not([type=button])")) button.disabled = false;
       if (hosted) $("runtime").textContent = "取り込んだ文章と学習結果は、このブラウザーに保存されます。";
     }).catch((error) => {
       $("runtime").hidden = false;
